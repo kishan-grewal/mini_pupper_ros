@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
+from mini_pupper_interfaces.msg import Tracking
 from cv_bridge import CvBridge
 import numpy as np
 import onnxruntime as ort
@@ -12,7 +13,7 @@ from ament_index_python.packages import get_package_share_directory
 
 IMAGE_SIZE = 320
 CONFIDENCE_THRESHOLD = 0.8
-IOU_THRESHOLD = 0.45        # For NMS
+IOU_THRESHOLD = 0.4 # For NMS
 MODEL_NAME = "yolo11n.onnx" 
 MODEL_PATH = os.path.join(
     get_package_share_directory('mini_pupper_tracking'), 'models', MODEL_NAME)
@@ -20,8 +21,10 @@ MODEL_PATH = os.path.join(
 class TrackingNode(Node):
     def __init__(self):
         super().__init__('mini_pupper_tracking_node')
+        self.get_logger().info("Tracking Node Created")
 
         self.subscription = self.create_subscription(Image, "/image_raw", self.image_callback, 10)
+        self.publisher = self.create_publisher(Tracking, "/tracking", 10)
         self.bridge = CvBridge()
         self.latest_frame = None
         self.frame_lock = Lock()
@@ -29,6 +32,11 @@ class TrackingNode(Node):
         self.frame_counter = 0
         self.frame_skip = 1
         self.min_interval = 1.0 / 30
+
+        # Variables for publisher
+        self.center_x = 0.0        # Normalized x-position [0-1] (0=left, 1=right)
+        self.center_y = 0.0        # Normalized y-position [0-1] (0=top, 1=bottom)
+        self.bounding_area = 0.0   # Normalized area [0-1]
 
         self.sess = ort.InferenceSession(
             MODEL_PATH,
@@ -102,14 +110,37 @@ class TrackingNode(Node):
 
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            processed = self.process_frame(cv_image)
+            processed, has_detection = self.process_frame(cv_image)
+            
             with self.frame_lock:
                 self.latest_frame = processed
+                
+            track_msg = Tracking()
+            track_msg.detected = False
+            track_msg.center_x = 0.0
+            track_msg.center_y = 0.0
+            track_msg.bounding_area = 0.0
+
+            track_msg.detected = has_detection
+            if track_msg.detected:
+                track_msg.center_x = self.center_x
+                track_msg.center_y = self.center_y
+                track_msg.bounding_area = self.bounding_area
+
+            self.publisher.publish(track_msg)
+                
             self.last_processed = now
+            
         except Exception as e:
             self.get_logger().error(f"Inference failed: {e}")
 
     def process_frame(self, frame):
+        # Detection variable for publisher
+        has_detection = False
+
+        # Frame size for publisher
+        frame_h, frame_w = frame.shape[:2]
+
         # 1. Preprocess with aspect ratio preservation
         img, (scale, pad_left, pad_top) = self._preprocess_frame(frame)
         img = img.transpose(2, 0, 1)[np.newaxis].astype(np.float32) / 255.0
@@ -125,6 +156,7 @@ class TrackingNode(Node):
         valid_indices = [i for i in range(len(scores)) 
                         if class_ids[i] == 0 and scores[i] > CONFIDENCE_THRESHOLD]
         if valid_indices:
+            has_detection = True
             boxes_filtered = boxes[valid_indices]
             scores_filtered = scores[valid_indices]
             keep_indices = self._apply_nms(boxes_filtered, scores_filtered, IOU_THRESHOLD)
@@ -137,6 +169,12 @@ class TrackingNode(Node):
                 w /= scale
                 h /= scale
                 
+                # Set class variables for publisher
+                self.center_x = cx / frame_w
+                self.center_y = cy / frame_h
+                self.bounding_area = w * h / (frame_w * frame_h)
+
+                # Extract corner coordinates
                 x1 = int(cx - w/2)
                 y1 = int(cy - h/2)
                 x2 = int(cx + w/2)
@@ -149,10 +187,5 @@ class TrackingNode(Node):
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, f"Person: {scores_filtered[i]:.2f}", 
                             (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                
-                area = abs(x2 - x1) * abs(y2 - y1)
-                center = [(x1+x2)/2, (y1+y2)/2]
-                cv2.putText(frame, f"A:{area:.2f}, C:({center[0]:.2f}, {center[1]:.2f})", 
-                            (x1, y1+10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        return frame
+        return frame, has_detection
