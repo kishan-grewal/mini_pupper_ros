@@ -2,8 +2,8 @@
 
 import rclpy
 from threading import Thread
-from tracking_node import TrackingNode
-from flask_server import create_flask_app
+from mini_pupper_tracking.tracking_node import TrackingNode
+from mini_pupper_tracking.flask_server import create_flask_app
 import os
 
 def main(args=None):

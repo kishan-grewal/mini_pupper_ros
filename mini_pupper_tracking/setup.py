@@ -41,7 +41,7 @@ setup(
     # Executable scripts
     entry_points={
         'console_scripts': [
-            'person_detection = mini_pupper_tracking.person_detection:main',
+            'main = mini_pupper_tracking.main:main',
         ],
     },
 )
