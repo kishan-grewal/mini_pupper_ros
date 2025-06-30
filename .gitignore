@@ -4,6 +4,11 @@
 # YOLO
 *.onnx
 
+# Colcon Outputs
+build/
+install/
+log/
+
 ### C ###
 # Prerequisites
 *.d
