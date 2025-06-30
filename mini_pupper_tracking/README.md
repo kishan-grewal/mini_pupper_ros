@@ -29,8 +29,10 @@ ros2 launch stanford_controller twist_to_command_converter.launch.py
 # Terminal 3
 source ~/ros2_ws/install/setup.bash
 ros2 run mini_pupper_tracking main
+```
 
 ```sh
 # Terminal 4
 source ~/ros2_ws/install/setup.bash
 ros2 run mini_pupper_tracking movement_node
+```

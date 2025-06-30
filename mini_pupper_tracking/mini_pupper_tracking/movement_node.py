@@ -30,29 +30,25 @@ def stop_rover_manually():
 
 class PID:
     def __init__(self, Kp, Ki, Kd):
-        """
-        Initialise PID parameters and internal state variables.
-        """
-        # TODO: store Kp, Ki, Kd
         self.K = [Kp, Ki, Kd]
-        # TODO: initialise prev_error and integral to 0
         self.prev_error = 0
         self.integral = 0
+        # Add storage for component values
+        self.last_p = 0
+        self.last_i = 0
+        self.last_d = 0
 
     def compute(self, error, dt):
-        """
-        Calculate the PID output based on current error and time delta.
-        """
-        # TODO:
-        # - update integral
         self.integral += error * dt
-        # - compute derivative
         derivative = (error - self.prev_error) / dt
-        # - compute and return output: Kp*error + Ki*integral + Kd*derivative
-        vec = [error, self.integral, derivative]
+        
+        # Store individual components
+        self.last_p = self.K[0] * error
+        self.last_i = self.K[1] * self.integral
+        self.last_d = self.K[2] * derivative
+        
         self.prev_error = error
-        #print(f"[PID] error={error:.2f}, dt={dt:.3f}, output={np.dot(vec, self.K):.2f}")
-        return np.dot(vec, self.K)
+        return self.last_p + self.last_i + self.last_d
     
 
 class MovementNode(Node):
@@ -68,22 +64,45 @@ class MovementNode(Node):
         self.center_x = 0.0
         self.center_y = 0.0
         self.bounding_area = 0.0
+
+        self.turn_pid = PID(3.0, 0.0, 0.05)
+        # Average derivative is around 5.0 (0-10)
+        self.turn_timer = self.create_timer(1 / 30.0, self.turn_callback)
+        self.last_turn = 0.0
+
+        self.pid_log_timer = self.create_timer(0.2, self.log_pid_data)
         
-        # Create timer for logging (1 second interval)
-        self.log_timer = None
-        self.create_timer(1.0, 
-            lambda: self.get_logger().info(
-            f"Tracking Data [1s]: Detected={self.detected}, "
-            f"X={self.center_x:.3f}, Y={self.center_y:.3f}, "
-            f"Area={self.bounding_area:.3f}") if hasattr(self, 'detected') else None)
+
+    def log_pid_data(self):
+        if self.detected:
+            self.get_logger().info(
+                f"P={self.turn_pid.last_p:.3f} "
+                f"I={self.turn_pid.last_i:.3f} "
+                f"D={self.turn_pid.last_d:.3f} "
+                f"Total={self.turn_pid.last_p + self.turn_pid.last_i + self.turn_pid.last_d:.3f}"
+                f"\n"
+            )
 
     def tracking_callback(self, msg):
         self.detected = msg.detected
-        if msg.detected:
+        if self.detected:
             self.center_x = msg.center_x
             self.center_y = msg.center_y
             self.bounding_area = msg.bounding_area
+    
+    def turn_callback(self):
+        twist = Twist()
+        twist.linear.x = 0.0
+        dt = 1 / 30.0
 
+        if self.detected:
+            twist.angular.z = self.turn_pid.compute(0.5 - self.center_x, dt)
+        else:
+            self.last_turn = self.last_turn * 0.5
+            twist.angular.z = self.last_turn
+        
+        self.velpub.publish(twist)
+        self.last_turn = twist.angular.z
 
 def main(args=None):
     rclpy.init(args=args)
