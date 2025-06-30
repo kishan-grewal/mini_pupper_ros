@@ -10,7 +10,6 @@ setup(
     packages=['mini_pupper_dance', 'mini_pupper_dance.new_dance'],
     package_dir={
         'mini_pupper_dance': 'mini_pupper_dance',
-        'mini_pupper_dance.new_dance': 'mini_pupper_dance/new_dance',
     },
     data_files=[
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),

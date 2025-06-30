@@ -1,6 +1,9 @@
 # Created by https://www.toptal.com/developers/gitignore/api/c,c++,python,ros
 # Edit at https://www.toptal.com/developers/gitignore?templates=c,c++,python,ros
 
+# YOLO
+*.onnx
+
 ### C ###
 # Prerequisites
 *.d
