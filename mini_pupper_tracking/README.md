@@ -12,7 +12,7 @@ It is only supported with the Stanford Controller and not the CHAMP Controller.
 ### **Mini Pupper**
 ```sh
 # Terminal 1 (SSH)
-. ~/ros2_ws/install/setup.bash # Use setup.zsh if you use zsh instead of bash
+. ~/ros2_ws_new/install/setup.bash # Use setup.zsh if you use zsh instead of bash
 ros2 launch mini_pupper_bringup bringup_with_stanford_controller.launch.py
 ```
 
