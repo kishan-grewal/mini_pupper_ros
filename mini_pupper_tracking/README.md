@@ -40,6 +40,7 @@ yolo export model=yolo11n.pt format=onnx imgsz=320
 Move the exported `.onnx` file to the tracking package directory:
 
 ```bash
+mkdir ~/ros2_ws/src/mini_pupper_ros/mini_pupper_tracking/models/
 mv yolo11n.onnx ~/ros2_ws/src/mini_pupper_ros/mini_pupper_tracking/models/
 ```
 
