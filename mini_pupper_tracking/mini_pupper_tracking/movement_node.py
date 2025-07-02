@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-import time
 
 import rclpy
+from rclpy.time import Time
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, LaserScan
@@ -66,10 +66,9 @@ class MovementNode(Node):
         self.center_y = 0.0
         self.bounding_area = 0.0
 
-        self.turn_pid = PID(1.5, 0.0, 0.05)
+        self.turn_pid = PID(5.0, 0.0, 0.1)
         # Average derivative is around 5.0 (0-10)
-        self.turn_dt = 1 / 30.0
-        self.turn_timer = self.create_timer(self.turn_dt, self.turn_callback)
+        self.turn_timer = self.create_timer(1 / 30.0, self.turn_callback)
         self.last_turn = 0.0
 
         self.pid_log_timer = self.create_timer(0.2, self.log_pid_data)
@@ -80,8 +79,9 @@ class MovementNode(Node):
         self.last_target_yaw = None
         self.turn_decay = 0.5
         self.turn_clamp = 2.0
-        self.angle_deadzone = 0.1 # radians
+        self.turn_stable_minimum = 0.3
         self.dead = False
+        self.last_turn_time = self.get_clock().now()
     
     def imu_callback(self, msg: Imu):
         q = msg.orientation
@@ -115,35 +115,48 @@ class MovementNode(Node):
         twist = Twist()
         twist.linear.x = 0.0
 
+        now = self.get_clock().now()
+        dt = (now - self.last_turn_time).nanoseconds / 1e9
+        self.last_turn_time = now
+
+        yaw_error = 0.0
+        output_raw = 0.0
+
         if self.detected:
             offset_angle = (self.center_x - 0.5) * self.fov_rad
+            desired_yaw = self.current_yaw + offset_angle
+            self.last_target_yaw = desired_yaw
 
-            if abs(offset_angle) < self.angle_deadzone:
-                self.dead = True
-                twist.angular.z = 0.0
-                self.velpub.publish(twist)
-                return
-            else:
-                self.dead = False
-                desired_yaw = self.current_yaw + offset_angle
-                self.last_target_yaw = desired_yaw
-
-                yaw_error = math.atan2(math.sin(desired_yaw - self.current_yaw),
-                                        math.cos(desired_yaw - self.current_yaw))
-                twist.angular.z = self.turn_pid.compute(-yaw_error, self.turn_dt)
+            yaw_error = math.atan2(
+                math.sin(desired_yaw - self.current_yaw),
+                math.cos(desired_yaw - self.current_yaw)
+            )
 
         elif self.last_target_yaw is not None:
-            self.dead = False
-            yaw_error = math.atan2(math.sin(self.last_target_yaw - self.current_yaw),
-                                    math.cos(self.last_target_yaw - self.current_yaw))
-            twist.angular.z = self.turn_pid.compute(-yaw_error, self.turn_dt)
+            yaw_error = math.atan2(
+                math.sin(self.last_target_yaw - self.current_yaw),
+                math.cos(self.last_target_yaw - self.current_yaw)
+            )
 
         else:
-            self.dead = False
-            self.last_turn = self.last_turn * self.turn_decay
+            # No detection and no remembered target: decay old command
+            self.dead = True
+            self.last_turn *= self.turn_decay
             twist.angular.z = self.last_turn
+            self.velpub.publish(twist)
+            return
 
-        twist.angular.z = max(-self.turn_clamp, min(self.turn_clamp, twist.angular.z))
+        # Run PID even if error is small
+        output_raw = self.turn_pid.compute(-yaw_error, dt)
+
+        # Apply deadband: if the output is too small, suppress it
+        if abs(output_raw) < self.turn_stable_minimum:
+            twist.angular.z = 0.0
+            self.dead = True
+        else:
+            twist.angular.z = max(-self.turn_clamp, min(self.turn_clamp, output_raw))
+            self.dead = False
+
         self.last_turn = twist.angular.z
         self.velpub.publish(twist)
 
