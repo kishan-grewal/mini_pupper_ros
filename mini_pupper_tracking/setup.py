@@ -10,17 +10,10 @@ setup(
     packages=[package_name],
     data_files=[
         ('share/ament_index/resource_index/packages',
-            ['resource/' + package_name]),
+         ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # Install launch files to correct location
-        (os.path.join('share', package_name, 'launch'), 
-         glob(os.path.join('launch', '*.launch.py'))),
-        # Install config files if you have them
-        (os.path.join('share', package_name, 'config'),
-         glob(os.path.join('config', '*.yaml'))),
-        # Model files
-        (os.path.join('share', package_name, 'models'),
-         glob(os.path.join('models', '*.onnx'))),
+        ('share/' + package_name + '/launch', glob('launch/*')),
+        ('share/' + package_name + '/models', glob('models/*')) 
     ],
     install_requires=['setuptools'],
     zip_safe=False,
