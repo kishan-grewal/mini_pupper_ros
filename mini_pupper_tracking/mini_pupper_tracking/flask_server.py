@@ -14,15 +14,31 @@ def create_flask_app(node):
         def generate():
             while True:
                 time.sleep(0.03)
-                with node.frame_lock:
-                    frame = node.latest_frame.copy() if node.latest_frame is not None else None
-                if frame is None:
+                
+                try:
+                    # Non-blocking frame access with timeout
+                    if node.frame_lock.acquire(timeout=0.1):
+                        try:
+                            frame = node.latest_frame.copy() if node.latest_frame is not None else None
+                        finally:
+                            node.frame_lock.release()
+                    else:
+                        # Skip this frame if lock can't be acquired
+                        continue
+                        
+                    if frame is None:
+                        continue
+                        
+                    success, buffer = cv2.imencode('.jpg', frame)
+                    if not success:
+                        continue
+                        
+                    yield (b'--frame\r\n'
+                           b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                           
+                except Exception as e:
+                    node.get_logger().error(f"Flask video feed error: {e}")
                     continue
-                success, buffer = cv2.imencode('.jpg', frame)
-                if not success:
-                    continue
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
         return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
