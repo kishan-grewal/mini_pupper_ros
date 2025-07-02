@@ -7,13 +7,13 @@ def create_flask_app(node):
 
     @app.route('/')
     def index():
-        return "<h2>Mini Pupper Tracking</h2><img src='/video_feed' width='640'>"
+        return "<h2>Mini Pupper Tracking</h2><img src='/video_feed' width='1280'>"
 
     @app.route('/video_feed')
     def video_feed():
         def generate():
             while True:
-                time.sleep(0.03)
+                time.sleep(0.017)
                 
                 try:
                     # Non-blocking frame access with timeout

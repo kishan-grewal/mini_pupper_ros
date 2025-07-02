@@ -5,7 +5,7 @@ from rclpy.time import Time
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import Imu, LaserScan
-from mini_pupper_interfaces.msg import Tracking
+from mini_pupper_interfaces.msg import Tracking, TrackingArray
 from tf_transformations import euler_from_quaternion
 import math
 import numpy as np
@@ -57,7 +57,7 @@ class MovementNode(Node):
         self.get_logger().info("Movement Node Created")
 
         self.velpub = self.create_publisher(Twist, "/cmd_vel", 10)
-        self.tracksub = self.create_subscription(Tracking, "/tracking", self.tracking_callback, 10)
+        self.tracksub = self.create_subscription(TrackingArray, "/tracking_array", self.tracking_callback, 10)
         self.imusub = self.create_subscription(Imu, "/imu/qdata", self.imu_callback, 10)
         
         # Tracking variables
@@ -103,12 +103,19 @@ class MovementNode(Node):
             else:
                 self.get_logger().info("DEAD")
 
-    def tracking_callback(self, msg):
-        self.detected = msg.detected
-        if self.detected:
-            self.center_x = msg.center_x
-            self.center_y = msg.center_y
-            self.bounding_area = msg.bounding_area
+
+    def tracking_callback(self, msg: TrackingArray):
+        if not msg.tracks:
+            self.detected = False
+            return
+
+        # Pick detection with highest confidence
+        choice = max(msg.tracks, key=lambda t: t.bounding_area)
+        
+        self.center_x = choice.center_x
+        self.center_y = choice.center_y
+        self.bounding_area = choice.bounding_area
+        self.detected = True
     
 
     def turn_callback(self):

@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from mini_pupper_interfaces.msg import Tracking
+from mini_pupper_interfaces.msg import Tracking, TrackingArray
 from cv_bridge import CvBridge
 import numpy as np
 import onnxruntime as ort
@@ -24,7 +24,7 @@ class TrackingNode(Node):
         self.get_logger().info("Tracking Node Created")
 
         self.subscription = self.create_subscription(Image, "/image_raw", self.image_callback, 10)
-        self.publisher = self.create_publisher(Tracking, "/tracking", 10)
+        self.publisher = self.create_publisher(TrackingArray, "/tracking_array", 10)
         self.bridge = CvBridge()
         self.latest_frame = None
         self.frame_lock = Lock()
@@ -32,11 +32,6 @@ class TrackingNode(Node):
         self.frame_counter = 0
         self.frame_skip = 1
         self.min_interval = 1.0 / 30
-
-        # Variables for publisher
-        self.center_x = 0.0        # Normalized x-position [0-1] (0=left, 1=right)
-        self.center_y = 0.0        # Normalized y-position [0-1] (0=top, 1=bottom)
-        self.bounding_area = 0.0   # Normalized area [0-1]
 
         self.sess = ort.InferenceSession(
             MODEL_PATH,
@@ -110,82 +105,77 @@ class TrackingNode(Node):
 
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            processed, has_detection = self.process_frame(cv_image)
-            
+            processed, detections = self.process_frame(cv_image)  # Ensure detections is a list of dicts
+
             with self.frame_lock:
                 self.latest_frame = processed
-                
-            track_msg = Tracking()
-            track_msg.detected = False
-            track_msg.center_x = 0.0
-            track_msg.center_y = 0.0
-            track_msg.bounding_area = 0.0
 
-            track_msg.detected = has_detection
-            if track_msg.detected:
-                track_msg.center_x = self.center_x
-                track_msg.center_y = self.center_y
-                track_msg.bounding_area = self.bounding_area
+            track_array_msg = TrackingArray()
+            track_array_msg.tracks = []
 
-            self.publisher.publish(track_msg)
-                
+            for det in detections:
+                track_msg = Tracking()
+                track_msg.confidence = det['score']
+                track_msg.center_x = det['cx']
+                track_msg.center_y = det['cy']
+                track_msg.bounding_area = det['area']
+                track_array_msg.tracks.append(track_msg)
+
+            self.publisher.publish(track_array_msg)
             self.last_processed = now
-            
+
         except Exception as e:
             self.get_logger().error(f"Inference failed: {e}")
 
+
     def process_frame(self, frame):
-        # Detection variable for publisher
-        has_detection = False
+        detections = [] 
 
-        # Frame size for publisher
         frame_h, frame_w = frame.shape[:2]
-
-        # 1. Preprocess with aspect ratio preservation
         img, (scale, pad_left, pad_top) = self._preprocess_frame(frame)
         img = img.transpose(2, 0, 1)[np.newaxis].astype(np.float32) / 255.0
-        
-        # 2. Run inference
+
         outputs = self.sess.run(None, {"images": img})[0]
         predictions = np.squeeze(outputs).T
         scores = np.max(predictions[:, 4:], axis=1)
         class_ids = np.argmax(predictions[:, 4:], axis=1)
         boxes = predictions[:, :4]
 
-        # 3. Apply NMS
+        # Valid if person and if confidence is above the threshold
         valid_indices = [i for i in range(len(scores)) 
                         if class_ids[i] == 0 and scores[i] > CONFIDENCE_THRESHOLD]
-        if valid_indices:
-            has_detection = True
-            boxes_filtered = boxes[valid_indices]
-            scores_filtered = scores[valid_indices]
-            keep_indices = self._apply_nms(boxes_filtered, scores_filtered, IOU_THRESHOLD)
+        
+        if not valid_indices:
+            return frame, []  # No detections
 
-            for i in keep_indices:
-                cx, cy, w, h = boxes_filtered[i]
-                # Convert coordinates back to original frame
-                cx = (cx - pad_left) / scale
-                cy = (cy - pad_top) / scale
-                w /= scale
-                h /= scale
-                
-                # Set class variables for publisher
-                self.center_x = cx / frame_w
-                self.center_y = cy / frame_h
-                self.bounding_area = w * h / (frame_w * frame_h)
+        boxes_filtered = boxes[valid_indices]
+        scores_filtered = scores[valid_indices]
+        keep_indices = self._apply_nms(boxes_filtered, scores_filtered, IOU_THRESHOLD)
 
-                # Extract corner coordinates
-                x1 = int(cx - w/2)
-                y1 = int(cy - h/2)
-                x2 = int(cx + w/2)
-                y2 = int(cy + h/2)
-                
-                # Clip to frame dimensions
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
-                
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"Person: {scores_filtered[i]:.2f}", 
-                            (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        for i in keep_indices:
+            cx, cy, w, h = boxes_filtered[i]
 
-        return frame, has_detection
+            cx = (cx - pad_left) / scale
+            cy = (cy - pad_top) / scale
+            w /= scale
+            h /= scale
+
+            norm_cx = cx / frame_w
+            norm_cy = cy / frame_h
+            norm_area = w * h / (frame_w * frame_h)
+
+            detections.append({'score': scores_filtered[i], 'cx': norm_cx, 'cy': norm_cy, 'area': norm_area}) 
+
+            # Draw box
+            x1 = int(cx - w / 2)
+            y1 = int(cy - h / 2)
+            x2 = int(cx + w / 2)
+            y2 = int(cy + h / 2)
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, f"Person: {scores_filtered[i]:.2f}",
+                        (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        return frame, detections 
