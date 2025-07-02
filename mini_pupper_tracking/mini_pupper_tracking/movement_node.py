@@ -79,7 +79,7 @@ class MovementNode(Node):
         self.last_target_yaw = None
         self.turn_decay = 0.5
         self.turn_clamp = 2.0
-        self.turn_stable_minimum = 0.3
+        self.turn_stable_minimum = 0.5
         self.dead = False
         self.last_turn_time = self.get_clock().now()
     

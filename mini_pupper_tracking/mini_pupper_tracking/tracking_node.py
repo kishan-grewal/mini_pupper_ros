@@ -115,7 +115,7 @@ class TrackingNode(Node):
 
             for det in detections:
                 track_msg = Tracking()
-                track_msg.confidence = det['score']
+                track_msg.confidence = float(det['score'])
                 track_msg.center_x = det['cx']
                 track_msg.center_y = det['cy']
                 track_msg.bounding_area = det['area']
