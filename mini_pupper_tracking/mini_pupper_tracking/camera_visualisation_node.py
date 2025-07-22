@@ -20,9 +20,11 @@ import rclpy
 from rclpy.node import Node
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Pose, Point
+from sensor_msgs.msg import LaserScan
 from stanford_controller.Config import Configuration
 import math
 from mini_pupper_interfaces.msg import TrackingArray
+from .lidar_processor import get_distance
 
 
 def to_point(p):
@@ -51,24 +53,35 @@ class CameraVisualisationNode(Node):
         self.people_points = [Point()]
         self.people_timer = self.create_timer(self.config.dt, self.publish_people)
 
+        self.lidar_subscriber = self.create_subscription(
+            LaserScan, "/scan", self.lidar_callback, 10
+        )
+        self.lidar = None
+        self.depth = 1.0
+
+    def lidar_callback(self, msg):
+        self.lidar = msg
+
     def people_callback(self, msg):
         points = []
         for track in msg.tracks:
             x = track.center_x
             y = track.top_y
-            A = track.bounding_area
 
             # Angular position within FOV
             angle_x = (x - 0.5) * self.fov_rad  # centre is at 0.5
             angle_y = (0.5 - y) * self.vertical_fov_rad  # invert Y because top is 0
 
             # Depth approximation
-            depth = min(2.5, 0.3 / math.pow(max(A, 0.001), 2.5))
+            # depth = min(2.5, 0.3 / math.pow(max(A, 0.001), 2.5))
+            depth = get_distance(x, self.lidar)
+            if isinstance(depth, float):
+                self.depth = depth
 
             # In camera frame (FOV points in +X direction)
-            X = depth
-            Y = depth * math.tan(angle_x)
-            Z = depth * math.tan(angle_y)
+            X = self.depth
+            Y = self.depth * math.tan(angle_x)
+            Z = self.depth * math.tan(angle_y)
 
             point = to_point([X, Y, Z])
             points.append(point)
