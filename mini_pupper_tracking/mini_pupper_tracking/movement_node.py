@@ -74,9 +74,9 @@ class MovementNode(Node):
         self.cmdpub = self.create_publisher(Command, '/robot_command', 10)
 
         #  Subscriptions
-        self.tracksub = self.create_subscription(
+        self.tracking_array_subscriber = self.create_subscription(
             TrackingArray, "/tracking_array", self.tracking_callback, 10)
-        self.imusub = self.create_subscription(
+        self.imu_subscriber = self.create_subscription(
             Imu, "imu/data_filtered_madgwick", self.imu_callback, 10)
 
         # Detection
@@ -135,7 +135,7 @@ class MovementNode(Node):
         self.yaw_timer = self.create_timer(0.015, self.yaw_callback)
         self.pitch_timer = self.create_timer(0.015, self.pitch_callback)
         self.command_timer = self.create_timer(0.015, self.command_callback)
-        self.log_timer = self.create_timer(1.0, self.log_data)
+        self.log_timer = self.create_timer(20.0, self.log_data)
 
     def command_callback(self):
         yaw_rate = self.last_yaw_rate if self.yaw_tracking_enabled else 0.0

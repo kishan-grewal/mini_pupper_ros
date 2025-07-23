@@ -59,10 +59,10 @@ class CameraVisualisationNode(Node):
         self.lidar = None
         self.depth = 1.0
 
-    def lidar_callback(self, msg):
+    def lidar_callback(self, msg: LaserScan):
         self.lidar = msg
 
-    def people_callback(self, msg):
+    def people_callback(self, msg: TrackingArray):
         points = []
         for track in msg.tracks:
             x = track.center_x
@@ -72,8 +72,6 @@ class CameraVisualisationNode(Node):
             angle_x = (x - 0.5) * self.fov_rad  # centre is at 0.5
             angle_y = (0.5 - y) * self.vertical_fov_rad  # invert Y because top is 0
 
-            # Depth approximation
-            # depth = min(2.5, 0.3 / math.pow(max(A, 0.001), 2.5))
             depth = get_distance(x, self.lidar)
             if isinstance(depth, float):
                 self.depth = depth

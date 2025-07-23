@@ -133,7 +133,7 @@ class TrackingNode(Node):
             cv2.BORDER_CONSTANT, value=(114, 114, 114))
         return padded, (scale, left, top)
 
-    def image_callback(self, msg):
+    def image_callback(self, msg: Image):
         now = time.time()
         self.frame_counter += 1
 
