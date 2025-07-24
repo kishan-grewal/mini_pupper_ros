@@ -19,6 +19,7 @@
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from mini_pupper_interfaces.msg import TrackingArray, Tracking
+from std_msgs.msg import Float32MultiArray
 from cv_bridge import CvBridge
 import numpy as np
 import onnxruntime as ort
@@ -50,7 +51,7 @@ class TrackingNode(Node):
         self.iou_threshold = self.get_parameter('yolo.iou_threshold').value
 
         # Flask Parameter Declaration
-        self.declare_parameter('flask.image_display_size', 1280)
+        self.declare_parameter('flask.image_display_size', 640)
         self.declare_parameter('flask.frame_rate', 15)
         self.declare_parameter('flask.auto_open_browser', True)
 
@@ -74,6 +75,29 @@ class TrackingNode(Node):
 
         self.tracker = MultiObjectTracker(dt=self.min_interval)
         self.get_logger().info("Loaded tracker: motpy")
+
+        # Occupancy grid
+        self.grid_subscription = self.create_subscription(
+            Float32MultiArray, '/occupancy_grid_raw', self.grid_callback, 10)
+        self.latest_grid_data = None
+        self.grid_shape = None
+        self.grid_lock = Lock()
+
+    def grid_callback(self, msg: Float32MultiArray):
+        """Receive raw occupancy grid from SLAM node"""
+        try:
+            # Extract dimensions
+            height = msg.layout.dim[0].size
+            width = msg.layout.dim[1].size
+            
+            # Reshape data
+            grid_array = np.array(msg.data, dtype=np.float32).reshape((height, width))
+            
+            with self.grid_lock:
+                self.latest_grid_data = grid_array.copy()
+                self.grid_shape = (height, width)
+        except Exception as e:
+            self.get_logger().error(f"Grid callback error: {e}")
 
     def _apply_nms(self, boxes, scores, iou_threshold):
         """Non-Maximum Suppression to remove overlapping boxes"""

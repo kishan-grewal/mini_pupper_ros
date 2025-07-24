@@ -74,5 +74,11 @@ def generate_launch_description():
             executable='camera_visualisation_node',
             name='mini_pupper_camera_visualisation_node',
             output='screen'
+        ),
+        Node(
+            package='mini_pupper_tracking',
+            executable='slam_node',
+            name='mini_pupper_slam_node',
+            output='screen'
         )
     ])

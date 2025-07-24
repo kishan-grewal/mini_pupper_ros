@@ -41,6 +41,7 @@ setup(
             'main = mini_pupper_tracking.main:main',
             'movement_node = mini_pupper_tracking.movement_node:main',
             'camera_visualisation_node = mini_pupper_tracking.camera_visualisation_node:main',
+            'slam_node = mini_pupper_tracking.slam_node:main',
         ],
     },
 )

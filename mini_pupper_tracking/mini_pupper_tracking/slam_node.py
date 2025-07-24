@@ -1,10 +1,14 @@
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, LaserScan
-from mini_pupper_interfaces.msg import TrackingArray
+from std_msgs.msg import Float32MultiArray, MultiArrayDimension
 from tf_transformations import euler_from_quaternion
 import math
 
+GRID_METERS = 5.0
+GRID_RESOLUTION = 0.05
+HIT = 0.8
+MISS = 0.2
 
 class SLAMNode(Node):
     def __init__(self):
@@ -15,8 +19,12 @@ class SLAMNode(Node):
         from .occupancy_grid import OccupancyGrid
         from .sensor_model import LiDARSensorModel
 
-        self.grid = OccupancyGrid(width_meters=6.0, height_meters=6.0, resolution=0.05)
-        self.sensor_model = LiDARSensorModel(prob_hit=0.9, prob_miss=0.1)
+        self.grid = OccupancyGrid(
+            width_meters=GRID_METERS,
+            height_meters=GRID_METERS,
+            resolution=GRID_RESOLUTION)
+        
+        self.sensor_model = LiDARSensorModel(prob_hit=HIT, prob_miss=MISS)
 
         # Robot state
         self.current_yaw = 0.0
@@ -28,10 +36,26 @@ class SLAMNode(Node):
             LaserScan, "/scan", self.lidar_callback, 10)
         self.imu_subscriber = self.create_subscription(
             Imu, "imu/data_filtered_madgwick", self.imu_callback, 10)
+        
+        # Publishers
+        self.grid_publisher = self.create_publisher(
+            Float32MultiArray, "/occupancy_grid_raw", 10)
+        self.grid_timer = self.create_timer(0.2, self.publish_grid_data)
 
         # Status logging
         self.scan_count = 0
         self.log_timer = self.create_timer(2.0, self.log_status)
+        
+    def publish_grid_data(self):
+        msg = Float32MultiArray()
+        msg.data = self.grid.grid.flatten().tolist()
+
+        msg.layout.dim = [
+            MultiArrayDimension(label="height", size=self.grid.height_cells, stride=self.grid.height_cells * self.grid.width_cells),
+            MultiArrayDimension(label="width", size=self.grid.width_cells, stride=self.grid.width_cells)
+        ]
+
+        self.grid_publisher.publish(msg)
 
     def imu_callback(self, msg: Imu):
         q = msg.orientation

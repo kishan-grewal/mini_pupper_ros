@@ -17,6 +17,25 @@
 from flask import Flask, Response
 import cv2
 import time
+import numpy as np
+
+
+def convert_grid_to_image(grid_data, target_size=640):
+    """Convert occupancy grid to displayable image"""
+    if grid_data is None:
+        return None
+
+    # Convert probabilities to grayscale (0-255)
+    grid_img = (grid_data * 255).astype(np.uint8)
+
+    # Flip vertically for proper display orientation
+    grid_img = cv2.flip(grid_img, 0)
+
+    # Resize for display
+    grid_img = cv2.resize(
+        grid_img, (target_size, target_size), interpolation=cv2.INTER_NEAREST)
+
+    return grid_img
 
 
 def create_flask_app(node, flask_config):
@@ -24,8 +43,21 @@ def create_flask_app(node, flask_config):
 
     @app.route('/')
     def index():
-        image_display_size = flask_config.get('image_display_size', 1280)
-        return f"<h2>Mini Pupper Tracking</h2><img src='/video_feed' width='{image_display_size}'>"
+        image_display_size = flask_config.get('image_display_size', 640)
+        return f'''
+        <h2>Mini Pupper Tracking & SLAM</h2>
+        <div style="display: flex; gap: 20px;">
+            <div>
+                <h3>Camera Feed</h3>
+                <img src='/video_feed' width='{image_display_size}'>
+            </div>
+            <div>
+                <h3>Occupancy Grid</h3>
+                <img src='/occupancy_grid' width='640' style="border: 1px solid #ccc;">
+                <p style="font-size: 12px;">Black=Free, Gray=Unknown, White=Occupied</p>
+            </div>
+        </div>
+        '''
 
     @app.route('/video_feed')
     def video_feed():
@@ -61,5 +93,33 @@ def create_flask_app(node, flask_config):
                     continue
 
         return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+    @app.route('/occupancy_grid')
+    def occupancy_grid():
+        def generate_grid():
+            while True:
+                time.sleep(0.2)
+                try:
+                    # Get raw grid data
+                    if node.grid_lock.acquire(timeout=0.2):
+                        try:
+                            grid_data = node.latest_grid_data.copy() if node.latest_grid_data is not None else None
+                        finally:
+                            node.grid_lock.release()
+                    else:
+                        continue
+                    
+                    # Convert to image
+                    grid_img = convert_grid_to_image(grid_data)
+                    if grid_img is not None:
+                        success, buffer = cv2.imencode('.png', grid_img)
+                        if success:
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/png\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                except Exception as e:
+                    node.get_logger().error(f"Grid streaming error: {e}")
+                    continue
+
+        return Response(generate_grid(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
     return app
