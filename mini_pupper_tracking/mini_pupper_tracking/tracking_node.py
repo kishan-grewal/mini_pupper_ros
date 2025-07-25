@@ -180,7 +180,9 @@ class TrackingNode(Node):
             for det in detections:
                 track_msg = Tracking()
                 track_msg.confidence = float(det['score'])
+                track_msg.left_x = det['left_x']
                 track_msg.center_x = det['center_x']
+                track_msg.right_x = det['right_x']
                 track_msg.top_y = det['top_y']
                 track_msg.bounding_area = det['area']
                 track_msg.track_id = str(det.get('track_id', ''))
@@ -253,7 +255,9 @@ class TrackingNode(Node):
                 # Store data for later
                 detection_data.append({
                     'score': scores_filtered[i],
+                    'left_x': x1 / frame_w,
                     'center_x': center_x / frame_w,
+                    'right_x': x2 / frame_w,
                     'top_y': y1 / frame_h,
                     'area': (w * h) / (frame_w * frame_h),
                     'pixel_coords': (int(x1), int(y1), int(x2), int(y2))
@@ -270,7 +274,9 @@ class TrackingNode(Node):
 
                     detections.append({
                         'score': data['score'],
+                        'left_x': data['left_x'],
                         'center_x': data['center_x'],
+                        'right_x': data['right_x'],
                         'top_y': data['top_y'],
                         'area': data['area'],
                         'track_id': str(track.id)  # Convert UUID to string

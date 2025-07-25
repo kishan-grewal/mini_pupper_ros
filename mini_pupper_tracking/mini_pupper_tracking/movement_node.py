@@ -239,7 +239,7 @@ class MovementNode(Node):
             self.detected = False
             return
 
-        # Pick detection with highest confidence
+        # Pick detection with highest area
         choice = max(msg.tracks, key=lambda t: t.bounding_area)
 
         self.center_x = choice.center_x

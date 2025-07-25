@@ -2,13 +2,21 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Imu, LaserScan
 from std_msgs.msg import Float32MultiArray, MultiArrayDimension
+from mini_pupper_interfaces.msg import TrackingArray
 from tf_transformations import euler_from_quaternion
 import math
+import numpy as np
+from .lidar_processor import get_distance
 
 GRID_METERS = 5.0
 GRID_RESOLUTION = 0.05
 HIT = 0.8
 MISS = 0.2
+
+
+def normalize_angle(angle):
+    return (angle + math.pi) % (2 * math.pi) - math.pi
+
 
 class SLAMNode(Node):
     def __init__(self):
@@ -26,25 +34,105 @@ class SLAMNode(Node):
         
         self.sensor_model = LiDARSensorModel(prob_hit=HIT, prob_miss=MISS)
 
+        self.scan_count = 0
+
         # Robot state
         self.current_yaw = 0.0
         self.robot_x = 0.0  # Fixed at origin since robot doesn't translate
         self.robot_y = 0.0
 
+        self.fov_deg = 62.2
+        self.fov_rad = math.radians(self.fov_deg)
+
         # Subscriptions
         self.lidar_subscriber = self.create_subscription(
             LaserScan, "/scan", self.lidar_callback, 10)
+        self.lidar = None
+        
         self.imu_subscriber = self.create_subscription(
             Imu, "imu/data_filtered_madgwick", self.imu_callback, 10)
+        
+        self.tracking_array_subscriber = self.create_subscription(
+            TrackingArray, "/tracking_array", self.tracking_callback, 10)
+        self.detected = False
+        self.left_x = None
+        self.center_x = None
+        self.right_x = None
         
         # Publishers
         self.grid_publisher = self.create_publisher(
             Float32MultiArray, "/occupancy_grid_raw", 10)
         self.grid_timer = self.create_timer(0.2, self.publish_grid_data)
 
-        # Status logging
-        self.scan_count = 0
-        self.log_timer = self.create_timer(2.0, self.log_status)
+        self.left_lidar_angle = 0.0
+        self.right_lidar_angle = 0.0
+        self.angle_debug_timer = self.create_timer(0.5, self.angle_debug_callback)
+
+    def angle_debug_callback(self):
+        try:
+            result = self.get_angle_vectorised(self.left_x)
+            if result is not None:
+                lidar_angle, camera_angle = result
+                self.left_lidar_angle = lidar_angle
+                distance = get_distance(self.left_lidar_angle, self.lidar)
+                if distance is not None:
+                    self.get_logger().info(f"LEFT lidar:{self.left_lidar_angle:.2f},distance:{distance:.2f}")
+                else:
+                    self.get_logger().info(f"LEFT lidar:{self.left_lidar_angle:.2f},distance:None")
+            else:
+                self.get_logger().warning("LEFT: get_angle_vectorised returned None")
+        except Exception as e:
+            self.get_logger().error(f"LEFT error:{e}")
+        
+        try:
+            result = self.get_angle_vectorised(self.right_x)
+            if result is not None:
+                lidar_angle, camera_angle = result
+                self.right_lidar_angle = lidar_angle
+                distance = get_distance(self.right_lidar_angle, self.lidar)
+                if distance is not None:
+                    self.get_logger().info(f"RIGHT lidar:{self.right_lidar_angle:.2f},distance:{distance:.2f}")
+                else:
+                    self.get_logger().info(f"RIGHT lidar:{self.right_lidar_angle:.2f},distance:None")
+            else:
+                self.get_logger().warning("RIGHT: get_angle_vectorised returned None")
+        except Exception as e:
+            self.get_logger().error(f"RIGHT error:{e}")
+
+    def get_angle_vectorised(self, x_value) -> float:
+        if not self.detected or self.center_x is None:
+            self.get_logger().warning("NOT DETECTED")
+            return None
+        theta_c = (x_value - 0.5) * self.fov_rad
+        v_c = np.array([math.cos(theta_c), math.sin(theta_c)])
+        ranges = np.array(self.lidar.ranges)
+        angles = self.lidar.angle_min + np.arange(len(ranges)) * self.lidar.angle_increment       
+        hit_x = ranges * np.cos(angles)
+        hit_y = ranges * np.sin(angles)
+        diff_x = hit_x - 0.14 # 14 cm
+        diff_y = hit_y - 0.00
+        perp_distances = np.abs(diff_x * v_c[1] - diff_y * v_c[0])
+        valid_mask = (~np.isinf(ranges)) & (~np.isnan(ranges)) & \
+                    (ranges >= self.lidar.range_min) & (ranges <= self.lidar.range_max)
+        if not np.any(valid_mask):
+            return None
+        valid_distances = perp_distances[valid_mask]
+        valid_indices = np.where(valid_mask)[0]
+        best_idx = valid_indices[np.argmin(valid_distances)]
+        return float(normalize_angle(angles[best_idx])), theta_c
+    
+    def tracking_callback(self, msg: TrackingArray):
+        if not msg.tracks:
+            self.detected = False
+            return
+
+        # Pick detection with highest area
+        choice = max(msg.tracks, key=lambda t: t.bounding_area)
+
+        self.left_x = choice.left_x
+        self.center_x = choice.center_x
+        self.right_x = choice.right_x
+        self.detected = True
         
     def publish_grid_data(self):
         msg = Float32MultiArray()
@@ -61,27 +149,22 @@ class SLAMNode(Node):
         q = msg.orientation
         quaternion = [q.x, q.y, q.z, q.w]
         roll, pitch, yaw = euler_from_quaternion(quaternion)
-        self.current_yaw = yaw
+
+        # Store initial yaw as offset on first IMU message
+        if not hasattr(self, 'initial_yaw'):
+            self.initial_yaw = yaw
+            self.get_logger().info(f"Set initial yaw offset: {yaw:.3f} rad ({math.degrees(yaw):.1f}°)")
+
+        # Use relative yaw (current - initial)
+        self.current_yaw = yaw - self.initial_yaw
 
     def lidar_callback(self, msg: LaserScan):
         if self.current_yaw is None:
             return
-            
-        # Debug coordinate systems on first few scans
-        if self.scan_count < 5:
-            self.get_logger().info(f"=== SCAN {self.scan_count} DEBUG ===")
-            self.get_logger().info(f"Robot yaw: {self.current_yaw:.3f} rad ({math.degrees(self.current_yaw):.1f}°)")
-            self.get_logger().info(f"LiDAR angle range: {msg.angle_min:.3f} to {msg.angle_max:.3f} rad")
-            self.get_logger().info(f"LiDAR angle range: {math.degrees(msg.angle_min):.1f}° to {math.degrees(msg.angle_max):.1f}°")
-            
-            # Check a few key rays
-            for i in [0, len(msg.ranges)//4, len(msg.ranges)//2, 3*len(msg.ranges)//4]:
-                if i < len(msg.ranges):
-                    ray_angle = msg.angle_min + i * msg.angle_increment
-                    distance = msg.ranges[i]
-                    self.get_logger().info(f"Ray {i}: angle={math.degrees(ray_angle):.1f}°, distance={distance:.2f}m")
         
         self.scan_count += 1
+
+        self.lidar = msg
 
         # Process each ray in the LiDAR scan
         for i, distance in enumerate(msg.ranges):
@@ -90,20 +173,8 @@ class SLAMNode(Node):
             self.sensor_model.process_lidar_ray(
                 self.grid,
                 self.robot_x, self.robot_y, self.current_yaw,
-                ray_angle, distance, msg.range_max
+                ray_angle - math.pi, distance, msg.range_max
             )
-
-    def log_status(self):
-        """Log SLAM progress"""
-        occupied_cells = (self.grid.grid > 0.7).sum()
-        free_cells = (self.grid.grid < 0.3).sum()
-        unknown_cells = ((self.grid.grid >= 0.3) & (self.grid.grid <= 0.7)).sum()
-
-        self.get_logger().info(
-            f"SLAM: {self.scan_count} scans, "
-            f"Occupied: {occupied_cells}, Free: {free_cells}, Unknown: {unknown_cells}, "
-            f"Yaw: {self.current_yaw:.2f}rad"
-        )
 
 
 def main(args=None):
