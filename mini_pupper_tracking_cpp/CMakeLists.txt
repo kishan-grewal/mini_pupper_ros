@@ -65,6 +65,31 @@ install(TARGETS pose_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# lie_imu_node ------------
+add_executable(lie_imu_node
+  src/lie_imu_node.cpp
+  src/lie_imu_node_main.cpp
+)
+
+target_include_directories(lie_imu_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+  ${EIGEN3_INCLUDE_DIRS}
+)
+
+ament_target_dependencies(lie_imu_node
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  visualization_msgs
+  mini_pupper_interfaces
+  tf2
+)
+
+install(TARGETS lie_imu_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY include/
   DESTINATION include/
 )
