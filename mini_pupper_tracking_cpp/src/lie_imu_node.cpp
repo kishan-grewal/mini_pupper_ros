@@ -1,5 +1,6 @@
 #include "mini_pupper_tracking_cpp/lie_imu_node.hpp"
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 
 // CODE BELOW -------------------
 LieImuNode::LieImuNode()
@@ -7,60 +8,137 @@ LieImuNode::LieImuNode()
 {
     RCLCPP_INFO(this->get_logger(), "LieImuNode has started.");
 
+    last_ekf_time_ = this->now();
+    ekf_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(20),  // 50 Hz EKF
+        std::bind(&LieImuNode::ekf_loop_, this)
+    );
+
+    slam_data_fresh_ = false;
+
     imu_data_subscription_ = this->create_subscription<sensor_msgs::msg::Imu>(
         "/imu/data", 10,
         std::bind(&LieImuNode::imu_data_callback_, this, std::placeholders::_1)
     );
-    last_imu_time_ = this->now();
 
     cmd_vel_subscription_ = this->create_subscription<geometry_msgs::msg::Twist>(
         "/cmd_vel", 10,
         std::bind(&LieImuNode::cmd_vel_callback_, this, std::placeholders::_1)
     );
-    vel_ = Eigen::Vector2d::Zero();
+
+    // Add after other subscriptions:
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    slam_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(200),
+        std::bind(&LieImuNode::get_slam_pose_from_tf_, this)
+    );
 
     X_ = Eigen::Matrix4d::Identity();
     P_ = Matrix6d::Identity();
     Q_ = Matrix6d::Identity() * 1e-3;
+
     r_accel_ = Eigen::Matrix2d::Identity() * 1e-2;
-    H_accel_ = Eigen::Matrix<double, 2, 6>::Zero();
-    H_accel_(0, 3) = 1.0;
-    H_accel_(1, 4) = 1.0;
+    r_slam_ = Eigen::Matrix3d::Zero();
+    r_slam_(0, 0) = 1e-3; // trust more for x
+    r_slam_(1, 1) = 1e-3; // trust more for y
+    r_slam_(2, 2) = 1e-1; // trust less for yaw
+
+    H_accel_ = Eigen::Matrix<double, 2, 6>::Zero(); // two rows of (x,y,z,r,p,ya)
+    H_accel_(0, 3) = 1.0; // roll cares about roll
+    H_accel_(1, 4) = 1.0; // pitch cares about pitch
+
+    H_slam_ = Eigen::Matrix<double, 3, 6>::Zero(); // three rows of (x,y,z,r,p,ya)
+    H_slam_(0, 0) = 1.0; // x cares about x
+    H_slam_(1, 1) = 1.0; // y cares about y
+    H_slam_(2, 5) = 1.0; // yaw cares about yaw
 }
 
 // (void)msg
 // INFO_STREAM
 
+void LieImuNode::ekf_loop_ ()
+{
+    rclcpp::Time ekf_time = this->now();
+    const double dt = (ekf_time - last_ekf_time_).seconds();
+    last_ekf_time_ = ekf_time;
+
+    if (!last_imu_) return;
+
+    Eigen::Vector3d accel(
+        last_imu_->linear_acceleration.x,
+        last_imu_->linear_acceleration.y,
+        last_imu_->linear_acceleration.z
+    );
+    Eigen::Vector3d gyro(
+        last_imu_->angular_velocity.x,
+        last_imu_->angular_velocity.y,
+        last_imu_->angular_velocity.z
+    );
+
+    double vel_x = 0.0;
+    double vel_y = 0.0;
+    if (last_twist_) {
+        vel_x = last_twist_->linear.x;
+        vel_y = last_twist_->linear.y;
+    }
+    
+    Vector6d u;
+    u << vel_x, vel_y, 0.0, gyro(0), gyro(1), gyro(2);
+    
+    // ekf
+    predict_(dt, u);
+    update_accel_(accel);
+
+    if (slam_data_fresh_ && last_slam_) {
+        Eigen::Vector3d slam_pos(
+            last_slam_->transform.translation.x,
+            last_slam_->transform.translation.y,
+            last_slam_->transform.translation.z
+        );
+        
+        tf2::Quaternion q(
+            last_slam_->transform.rotation.x,
+            last_slam_->transform.rotation.y,
+            last_slam_->transform.rotation.z,
+            last_slam_->transform.rotation.w
+        );
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+        
+        update_slam_(slam_pos, yaw);
+        slam_data_fresh_ = false;  // mark as used
+    }
+
+    // Logging
+    Eigen::Vector3d t = X_.block<3,1>(0,3);
+    Eigen::Matrix3d R = X_.block<3,3>(0,0);
+    Eigen::Vector3d gyro_R = so3_log_(R);
+    RCLCPP_INFO(this->get_logger(), 
+        "aaaEKF: [%.3f, %.3f, %.3f] RPY: [%.2f, %.2f, %.2f]°", 
+        t(0), t(1), t(2), 
+        gyro_R(0)*180/M_PI, gyro_R(1)*180/M_PI, gyro_R(2)*180/M_PI);
+}
+
 void LieImuNode::imu_data_callback_ (sensor_msgs::msg::Imu::ConstSharedPtr msg)
 {   
-    rclcpp::Time current_time(msg->header.stamp);
-    const double dt = (current_time - last_imu_time_).seconds();
-    last_imu_time_ = current_time;
-
-    Eigen::Vector3d accel;
-    accel << msg->linear_acceleration.x, msg->linear_acceleration.y, msg->linear_acceleration.z;
-    Eigen::Vector3d gyro;
-    gyro << msg->angular_velocity.x, msg->angular_velocity.y, msg->angular_velocity.z;
-
-    Vector6d u;
-    u << vel_(0), vel_(1), 0.0, gyro(0), gyro(1), gyro(2);
-
-    predict_(dt, u);
-    update_accel_ (accel);
-
-    // Quick logging
-    Eigen::Vector3d pos = X_.block<3,1>(0,3);
-    Eigen::Matrix3d R = X_.block<3,3>(0,0);
-    Eigen::Vector3d rpy = so3_log_(R);
-    RCLCPP_INFO(this->get_logger(), 
-        "Pos: [%.3f, %.3f, %.3f] RPY: [%.3f, %.3f, %.3f]", 
-        pos(0), pos(1), pos(2), 
-        rpy(0)*180/M_PI, rpy(1)*180/M_PI, rpy(2)*180/M_PI);
+    last_imu_ = std::const_pointer_cast<sensor_msgs::msg::Imu>(msg);
 }
 
 void LieImuNode::cmd_vel_callback_ (geometry_msgs::msg::Twist::ConstSharedPtr msg)
 {
-    vel_ << msg->linear.x, msg->linear.y;
+    last_twist_ = std::const_pointer_cast<geometry_msgs::msg::Twist>(msg);
+}
+
+void LieImuNode::get_slam_pose_from_tf_()
+{
+    try {
+        geometry_msgs::msg::TransformStamped transform = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+        last_slam_ = std::make_shared<geometry_msgs::msg::TransformStamped>(transform);
+    } 
+    catch (const tf2::TransformException &ex) {
+        RCLCPP_ERROR(this->get_logger(), "TransformException: %s", ex.what());
+    }
 }
 
 void LieImuNode::predict_ (const double dt, const Vector6d& u)
@@ -108,6 +186,38 @@ void LieImuNode::update_accel_ (const Eigen::Vector3d& accel)
     // {6,6} = {6,6} - {6,2}*{2,6}
     Matrix6d KH = K * H_accel_;
     P_ = (I - KH) * P_ * (I - KH).transpose() + K * r_accel_ * K.transpose(); // joseph
+}
+
+void LieImuNode::update_slam_ (const Eigen::Vector3d& slam_pos, const double slam_yaw)
+{
+    Eigen::Vector3d z;
+    z << slam_pos(0), slam_pos(1), slam_yaw; // x y yaw
+
+    Eigen::Matrix3d R = X_.block<3, 3>(0, 0);
+    Eigen::Vector3d gyro_R = so3_log_(R);
+    Eigen::Vector3d t = X_.block<3, 1>(0, 3);
+    Eigen::Vector3d h_hat;
+    h_hat << t(0), t(1), gyro_R(2);
+
+    // innovation
+    Eigen::Vector3d y = z - h_hat;
+    // y = z - hhat
+
+    // current innovation covariance
+    Eigen::Matrix3d S = H_slam_ * P_ * H_slam_.transpose() + r_slam_;
+    // {6,6}*{6,3}*{3,3} = {6,3}
+    Eigen::Matrix<double, 6, 3> K = P_ * H_slam_.transpose() * S.inverse();
+
+    // SE(3): x̂⁺ = x̂⁻ ⊞ δx instead of x̂⁺ = x̂⁻ + δx
+    // x = x + ky
+    X_ = X_ * se3_exp_(K * y);
+
+    // covariance counter-update:
+    Matrix6d I = Matrix6d::Identity();
+    //P_ *= (I - K*H_);
+    // {6,6} = {6,6} - {6,3}*{3,6}
+    Matrix6d KH = K * H_slam_;
+    P_ = (I - KH) * P_ * (I - KH).transpose() + K * r_slam_ * K.transpose(); // joseph
 }
 
 Eigen::Matrix3d LieImuNode::skew_ (Eigen::Vector3d phi)
