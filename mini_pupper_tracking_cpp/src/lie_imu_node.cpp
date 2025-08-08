@@ -10,7 +10,7 @@ LieImuNode::LieImuNode()
 
     last_ekf_time_ = this->now();
     ekf_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(20),  // 50 Hz EKF
+        std::chrono::milliseconds(20), // 50 Hz EKF
         std::bind(&LieImuNode::ekf_loop_, this)
     );
 
@@ -30,19 +30,17 @@ LieImuNode::LieImuNode()
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
     slam_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(200),
+        std::chrono::milliseconds(100),
         std::bind(&LieImuNode::get_slam_pose_from_tf_, this)
     );
 
     X_ = Eigen::Matrix4d::Identity();
     P_ = Matrix6d::Identity();
-    Q_ = Matrix6d::Identity() * 1e-3;
+    Q_ = Matrix6d::Zero();
+    Q_.diagonal() << 2e-3, 2e-3, 5e-5, 5e-5, 5e-5, 5e-4;
 
     r_accel_ = Eigen::Matrix2d::Identity() * 1e-2;
-    r_slam_ = Eigen::Matrix3d::Zero();
-    r_slam_(0, 0) = 1e-3; // trust more for x
-    r_slam_(1, 1) = 1e-3; // trust more for y
-    r_slam_(2, 2) = 1e-1; // trust less for yaw
+    r_slam_ = Eigen::Matrix3d::Identity() * 1e-4;
 
     H_accel_ = Eigen::Matrix<double, 2, 6>::Zero(); // two rows of (x,y,z,r,p,ya)
     H_accel_(0, 3) = 1.0; // roll cares about roll
@@ -115,7 +113,7 @@ void LieImuNode::ekf_loop_ ()
     Eigen::Matrix3d R = X_.block<3,3>(0,0);
     Eigen::Vector3d gyro_R = so3_log_(R);
     RCLCPP_INFO(this->get_logger(), 
-        "aaaEKF: [%.3f, %.3f, %.3f] RPY: [%.2f, %.2f, %.2f]°", 
+        "aEKF: [%.3f, %.3f, %.3f] RPY: [%.2f, %.2f, %.2f]°", 
         t(0), t(1), t(2), 
         gyro_R(0)*180/M_PI, gyro_R(1)*180/M_PI, gyro_R(2)*180/M_PI);
 }
@@ -135,6 +133,7 @@ void LieImuNode::get_slam_pose_from_tf_()
     try {
         geometry_msgs::msg::TransformStamped transform = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
         last_slam_ = std::make_shared<geometry_msgs::msg::TransformStamped>(transform);
+        slam_data_fresh_ = true; // was missing so slam pose wasnt being used
     } 
     catch (const tf2::TransformException &ex) {
         RCLCPP_ERROR(this->get_logger(), "TransformException: %s", ex.what());
