@@ -27,7 +27,7 @@ from sensor_msgs.msg import Imu
 
 GRAVITY = 9.80665
 DEG2RAD = math.pi / 180.0
-
+    
 
 class IMUNode(Node):
     def __init__(self):

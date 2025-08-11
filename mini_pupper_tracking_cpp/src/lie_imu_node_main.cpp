@@ -1,7 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include "mini_pupper_tracking_cpp/lie_imu_node.hpp"
 
-// CODE BELOW ----------------------
 int main(int argc, char * argv[])
 {
     rclcpp::init(argc, argv);

@@ -1,20 +1,35 @@
 #include "mini_pupper_tracking_cpp/lie_imu_node.hpp"
+
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <laser_geometry/laser_geometry.hpp>
+
+// full pcl include list
+#include <pcl/registration/ndt.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/radius_outlier_removal.h>
+#include <pcl_conversions/pcl_conversions.h>
+
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 
-// CODE BELOW -------------------
 LieImuNode::LieImuNode()
 : Node("lie_imu_node")
 {
     RCLCPP_INFO(this->get_logger(), "LieImuNode has started.");
 
-    last_ekf_time_ = this->now();
-    ekf_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(20), // 50 Hz EKF
-        std::bind(&LieImuNode::ekf_loop_, this)
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    slam_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(100),
+        std::bind(&LieImuNode::get_slam_pose_from_tf_, this)
     );
 
-    slam_data_fresh_ = false;
+    last_ekf_time_ = this->now();
+    ekf_timer_ = this->create_wall_timer(
+        std::chrono::milliseconds(EkfPeriodMs), // 50 Hz EKF
+        std::bind(&LieImuNode::ekf_loop_, this)
+    );
 
     imu_data_subscription_ = this->create_subscription<sensor_msgs::msg::Imu>(
         "/imu/data", 10,
@@ -26,19 +41,15 @@ LieImuNode::LieImuNode()
         std::bind(&LieImuNode::cmd_vel_callback_, this, std::placeholders::_1)
     );
 
-    // Add after other subscriptions:
-    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-    slam_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&LieImuNode::get_slam_pose_from_tf_, this)
+    laser_scan_subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+        "/laser_scan", 10,
+        std::bind(&LieImuNode::laser_scan_callback_, this, std::placeholders::_1)
     );
 
-    X_ = Eigen::Matrix4d::Identity();
     P_ = Matrix6d::Identity();
+
     Q_ = Matrix6d::Zero();
     Q_.diagonal() << 2e-3, 2e-3, 5e-5, 5e-5, 5e-5, 5e-4;
-
     r_accel_ = Eigen::Matrix2d::Identity() * 1e-2;
     r_slam_ = Eigen::Matrix3d::Identity() * 1e-4;
 
@@ -50,7 +61,17 @@ LieImuNode::LieImuNode()
     H_slam_(0, 0) = 1.0; // x cares about x
     H_slam_(1, 1) = 1.0; // y cares about y
     H_slam_(2, 5) = 1.0; // yaw cares about yaw
+
+    //start_lidar_();
 }
+
+void LieImuNode::start_lidar_ ()
+{
+    projector_ = std::make_unique<laser_geometry::LaserProjection>();
+    prev_cloud_.reset(new pcl::PointCloud<PointT>);
+    
+    
+}   
 
 // (void)msg
 // INFO_STREAM
@@ -144,7 +165,7 @@ void LieImuNode::predict_ (const double dt, const Vector6d& u)
 {
     Vector6d xi = u * dt;
     Eigen::Matrix4d T = se3_exp_(xi);
-    // world->new = world->old * old->new
+    // world<-new = world<-old * old<-new
     X_ = X_ * T;
 
     Matrix6d F = Matrix6d::Identity();
