@@ -41,11 +41,6 @@ LieImuNode::LieImuNode()
         std::bind(&LieImuNode::cmd_vel_callback_, this, std::placeholders::_1)
     );
 
-    laser_scan_subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-        "/laser_scan", 10,
-        std::bind(&LieImuNode::laser_scan_callback_, this, std::placeholders::_1)
-    );
-
     P_ = Matrix6d::Identity();
 
     Q_ = Matrix6d::Zero();
@@ -61,17 +56,7 @@ LieImuNode::LieImuNode()
     H_slam_(0, 0) = 1.0; // x cares about x
     H_slam_(1, 1) = 1.0; // y cares about y
     H_slam_(2, 5) = 1.0; // yaw cares about yaw
-
-    //start_lidar_();
 }
-
-void LieImuNode::start_lidar_ ()
-{
-    projector_ = std::make_unique<laser_geometry::LaserProjection>();
-    prev_cloud_.reset(new pcl::PointCloud<PointT>);
-    
-    
-}   
 
 // (void)msg
 // INFO_STREAM

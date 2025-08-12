@@ -18,14 +18,25 @@
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch.substitutions import LaunchConfiguration
+from launch.actions import DeclareLaunchArgument
 
 
 def generate_launch_description():
+    robot_namespace = LaunchConfiguration("robot_namespace")
+    robot_namespace_arg = DeclareLaunchArgument(
+        "robot_namespace",
+        default_value="",
+        description="Namespace for this robot"
+    )
+    
     return LaunchDescription([
+        robot_namespace_arg,
         Node(
             package='stanford_controller',
             executable='twist_to_command_node',
             name='twist_to_command_node',
+            namespace=robot_namespace,  # Add this line
             output='screen',
             parameters=[]
         )

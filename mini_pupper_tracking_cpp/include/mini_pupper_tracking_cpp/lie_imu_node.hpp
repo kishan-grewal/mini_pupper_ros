@@ -48,26 +48,10 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscription_;
     void cmd_vel_callback_ (geometry_msgs::msg::Twist::ConstSharedPtr msg);
 
-    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laser_scan_subscription_;
-    void laser_scan_callback_(const sensor_msgs::msg::LaserScan::SharedPtr msg);
-
-    // === SLAM TF (keep for now) ===
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     rclcpp::TimerBase::SharedPtr slam_timer_;
     void get_slam_pose_from_tf_();
-
-    // lidar (/scan -> point cloud -> NDT)
-    std::unique_ptr<laser_geometry::LaserProjection> projector_; // pointer (forward-declared)
-    using PointT = pcl::PointXYZ;
-    pcl::PointCloud<PointT>::Ptr prev_cloud_; // target for alignment
-    bool have_prev_{false}; // first-frame guard
-    Eigen::Matrix4d T_map_prev_ = Eigen::Matrix4d::Identity(); // pose accumulator
-    void start_lidar_();
-
-    // minimal preproc hook
-    pcl::PointCloud<PointT>::Ptr preprocess_cloud_(
-        const pcl::PointCloud<PointT>::Ptr& in);
 
     // ekf
     Eigen::Matrix4d X_ = Eigen::Matrix4d::Identity(); // pose (world←state)
