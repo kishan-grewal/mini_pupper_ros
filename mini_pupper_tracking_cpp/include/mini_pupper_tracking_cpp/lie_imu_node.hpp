@@ -22,18 +22,8 @@
 #include <sensor_msgs/msg/laser_scan.hpp>       
 #include <geometry_msgs/msg/twist.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <Eigen/Dense>
-#include <memory> // for unique ptr
-
-// only the light pcl used in members
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
-
-// forward declare keeps heavy header out of the hpp
-namespace laser_geometry { class LaserProjection; }
 
 using Vector6d = Eigen::Matrix<double, 6, 1>;
 using Matrix6d = Eigen::Matrix<double, 6, 6>;
@@ -54,8 +44,6 @@ private:
     // msg pointers
     sensor_msgs::msg::Imu::SharedPtr last_imu_;
     geometry_msgs::msg::Twist::SharedPtr last_twist_;
-    geometry_msgs::msg::TransformStamped::SharedPtr last_slam_;
-    bool slam_data_fresh_{false};
 
     // subscriptions
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_data_subscription_;
@@ -63,11 +51,6 @@ private:
 
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscription_;
     void cmd_vel_callback_ (geometry_msgs::msg::Twist::ConstSharedPtr msg);
-
-    std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
-    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-    rclcpp::TimerBase::SharedPtr slam_timer_;
-    void get_slam_pose_from_tf_();
 
     // ekf
     Eigen::Matrix4d X_ = Eigen::Matrix4d::Identity(); // pose (world←state)
@@ -82,7 +65,6 @@ private:
 
     void predict_ (const double dt, const Vector6d& u);
     void update_accel_ (const Eigen::Vector3d& accel);
-    void update_slam_ (const Eigen::Vector3d& slam_pos, const double slam_yaw);
 
     // SE3 tools
     Eigen::Matrix3d skew_ (Eigen::Vector3d w);

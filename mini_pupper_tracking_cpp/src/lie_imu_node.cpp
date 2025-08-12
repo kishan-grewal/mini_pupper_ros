@@ -16,16 +16,6 @@
 
 #include "mini_pupper_tracking_cpp/lie_imu_node.hpp"
 
-#include <sensor_msgs/msg/point_cloud2.hpp>
-#include <laser_geometry/laser_geometry.hpp>
-
-// full pcl include list
-#include <pcl/registration/ndt.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/passthrough.h>
-#include <pcl/filters/radius_outlier_removal.h>
-#include <pcl_conversions/pcl_conversions.h>
-
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/LinearMath/Matrix3x3.h>
 
@@ -33,13 +23,6 @@ LieImuNode::LieImuNode()
 : Node("lie_imu_node")
 {
     RCLCPP_INFO(this->get_logger(), "LieImuNode has started.");
-
-    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-    slam_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(100),
-        std::bind(&LieImuNode::get_slam_pose_from_tf_, this)
-    );
 
     last_ekf_time_ = this->now();
     ekf_timer_ = this->create_wall_timer(
@@ -110,26 +93,6 @@ void LieImuNode::ekf_loop_ ()
     predict_(dt, u);
     update_accel_(accel);
 
-    if (slam_data_fresh_ && last_slam_) {
-        Eigen::Vector3d slam_pos(
-            last_slam_->transform.translation.x,
-            last_slam_->transform.translation.y,
-            last_slam_->transform.translation.z
-        );
-        
-        tf2::Quaternion q(
-            last_slam_->transform.rotation.x,
-            last_slam_->transform.rotation.y,
-            last_slam_->transform.rotation.z,
-            last_slam_->transform.rotation.w
-        );
-        double roll, pitch, yaw;
-        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-        
-        update_slam_(slam_pos, yaw);
-        slam_data_fresh_ = false;  // mark as used
-    }
-
     // Logging
     Eigen::Vector3d t = X_.block<3,1>(0,3);
     Eigen::Matrix3d R = X_.block<3,3>(0,0);
@@ -148,18 +111,6 @@ void LieImuNode::imu_data_callback_ (sensor_msgs::msg::Imu::ConstSharedPtr msg)
 void LieImuNode::cmd_vel_callback_ (geometry_msgs::msg::Twist::ConstSharedPtr msg)
 {
     last_twist_ = std::const_pointer_cast<geometry_msgs::msg::Twist>(msg);
-}
-
-void LieImuNode::get_slam_pose_from_tf_()
-{
-    try {
-        geometry_msgs::msg::TransformStamped transform = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
-        last_slam_ = std::make_shared<geometry_msgs::msg::TransformStamped>(transform);
-        slam_data_fresh_ = true; // was missing so slam pose wasnt being used
-    } 
-    catch (const tf2::TransformException &ex) {
-        RCLCPP_ERROR(this->get_logger(), "TransformException: %s", ex.what());
-    }
 }
 
 void LieImuNode::predict_ (const double dt, const Vector6d& u)
@@ -207,38 +158,6 @@ void LieImuNode::update_accel_ (const Eigen::Vector3d& accel)
     // {6,6} = {6,6} - {6,2}*{2,6}
     Matrix6d KH = K * H_accel_;
     P_ = (I - KH) * P_ * (I - KH).transpose() + K * r_accel_ * K.transpose(); // joseph
-}
-
-void LieImuNode::update_slam_ (const Eigen::Vector3d& slam_pos, const double slam_yaw)
-{
-    Eigen::Vector3d z;
-    z << slam_pos(0), slam_pos(1), slam_yaw; // x y yaw
-
-    Eigen::Matrix3d R = X_.block<3, 3>(0, 0);
-    Eigen::Vector3d gyro_R = so3_log_(R);
-    Eigen::Vector3d t = X_.block<3, 1>(0, 3);
-    Eigen::Vector3d h_hat;
-    h_hat << t(0), t(1), gyro_R(2);
-
-    // innovation
-    Eigen::Vector3d y = z - h_hat;
-    // y = z - hhat
-
-    // current innovation covariance
-    Eigen::Matrix3d S = H_slam_ * P_ * H_slam_.transpose() + r_slam_;
-    // {6,6}*{6,3}*{3,3} = {6,3}
-    Eigen::Matrix<double, 6, 3> K = P_ * H_slam_.transpose() * S.inverse();
-
-    // SE(3): x̂⁺ = x̂⁻ ⊞ δx instead of x̂⁺ = x̂⁻ + δx
-    // x = x + ky
-    X_ = X_ * se3_exp_(K * y);
-
-    // covariance counter-update:
-    Matrix6d I = Matrix6d::Identity();
-    //P_ *= (I - K*H_);
-    // {6,6} = {6,6} - {6,3}*{3,6}
-    Matrix6d KH = K * H_slam_;
-    P_ = (I - KH) * P_ * (I - KH).transpose() + K * r_slam_ * K.transpose(); // joseph
 }
 
 Eigen::Matrix3d LieImuNode::skew_ (Eigen::Vector3d phi)

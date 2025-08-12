@@ -12,8 +12,6 @@
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>visualization_msgs</depend>
-  <depend>mini_pupper_interfaces</depend>
   <depend>tf2</depend>
 
   <build_depend>eigen</build_depend>
