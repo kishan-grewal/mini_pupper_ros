@@ -1,3 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+//
+// Copyright (c) 2025 MangDang
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "mini_pupper_tracking_cpp/lie_imu_node.hpp"
 
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -119,7 +135,7 @@ void LieImuNode::ekf_loop_ ()
     Eigen::Matrix3d R = X_.block<3,3>(0,0);
     Eigen::Vector3d gyro_R = so3_log_(R);
     RCLCPP_INFO(this->get_logger(), 
-        "aEKF: [%.3f, %.3f, %.3f] RPY: [%.2f, %.2f, %.2f]°", 
+        "xEKF: [%.3f, %.3f, %.3f] RPY: [%.2f, %.2f, %.2f]°", 
         t(0), t(1), t(2), 
         gyro_R(0)*180/M_PI, gyro_R(1)*180/M_PI, gyro_R(2)*180/M_PI);
 }

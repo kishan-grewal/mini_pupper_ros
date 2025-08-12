@@ -21,56 +21,6 @@ find_package(pcl_conversions REQUIRED)
 find_package(pcl_msgs REQUIRED)
 find_package(laser_geometry REQUIRED)
 
-# orientation_node ------------
-add_executable(orientation_node
-  src/orientation_node.cpp
-  src/orientation_node_main.cpp
-)
-
-target_include_directories(orientation_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${EIGEN3_INCLUDE_DIRS}
-)
-
-ament_target_dependencies(orientation_node
-  rclcpp
-  sensor_msgs
-  geometry_msgs
-  visualization_msgs
-  mini_pupper_interfaces
-  tf2
-)
-
-install(TARGETS orientation_node
-  DESTINATION lib/${PROJECT_NAME}
-)
-
-# pose_node ------------
-add_executable(pose_node
-  src/pose_node.cpp
-  src/pose_node_main.cpp
-)
-
-target_include_directories(pose_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${EIGEN3_INCLUDE_DIRS}
-)
-
-ament_target_dependencies(pose_node
-  rclcpp
-  sensor_msgs
-  geometry_msgs
-  visualization_msgs
-  mini_pupper_interfaces
-  tf2
-)
-
-install(TARGETS pose_node
-  DESTINATION lib/${PROJECT_NAME}
-)
-
 # lie_imu_node ------------
 add_executable(lie_imu_node
   src/lie_imu_node.cpp
