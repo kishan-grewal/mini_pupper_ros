@@ -31,13 +31,17 @@ LieImuNode::LieImuNode()
     );
 
     imu_data_subscription_ = this->create_subscription<sensor_msgs::msg::Imu>(
-        "/imu/data", 10,
+        "imu/data", 10,
         std::bind(&LieImuNode::imu_data_callback_, this, std::placeholders::_1)
     );
 
     cmd_vel_subscription_ = this->create_subscription<geometry_msgs::msg::Twist>(
-        "/cmd_vel", 10,
+        "cmd_vel", 10,
         std::bind(&LieImuNode::cmd_vel_callback_, this, std::placeholders::_1)
+    );
+
+    ekf_pose_publisher_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        "ekf_pose", 10
     );
 
     P_ = Matrix6d::Identity();
@@ -92,13 +96,51 @@ void LieImuNode::ekf_loop_ ()
     // ekf
     predict_(dt, u);
     update_accel_(accel);
+    ekf_publish_(ekf_time);
+    ekf_log_();
+}
 
+void LieImuNode::ekf_publish_ (const rclcpp::Time &stamp)
+{
+    geometry_msgs::msg::PoseWithCovarianceStamped msg;
+    msg.header.frame_id = "odom";
+    msg.header.stamp = stamp;
+
+    Eigen::Vector3d t = X_.block<3,1>(0,3);
+    Eigen::Matrix3d R = X_.block<3,3>(0,0);
+    Eigen::Vector3d gyro_R = so3_log_(R);
+
+    // position vector
+    msg.pose.pose.position.x = t(0);
+    msg.pose.pose.position.y = t(1);
+    msg.pose.pose.position.z = t(2);
+
+    // orientation quaternion
+    tf2::Quaternion q;
+    q.setRPY(gyro_R(0), gyro_R(1), gyro_R(2));
+    msg.pose.pose.orientation.x = q.x();
+    msg.pose.pose.orientation.y = q.y();
+    msg.pose.pose.orientation.z = q.z();
+    msg.pose.pose.orientation.w = q.w();
+
+    // covariance matrix
+    for (size_t r = 0; r < 6; ++r) {
+        for (size_t c = 0; c < 6; ++c) {
+            msg.pose.covariance[c + 6*r] = P_(r, c);
+        }
+    }
+
+    ekf_pose_publisher_->publish(msg);
+}
+
+void LieImuNode::ekf_log_ ()
+{
     // Logging
     Eigen::Vector3d t = X_.block<3,1>(0,3);
     Eigen::Matrix3d R = X_.block<3,3>(0,0);
     Eigen::Vector3d gyro_R = so3_log_(R);
     RCLCPP_INFO(this->get_logger(), 
-        "xEKF: [%.3f, %.3f, %.3f] RPY: [%.2f, %.2f, %.2f]°", 
+        "wEKF: [%.3f, %.3f, %.3f] RPY: [%.2f, %.2f, %.2f]°", 
         t(0), t(1), t(2), 
         gyro_R(0)*180/M_PI, gyro_R(1)*180/M_PI, gyro_R(2)*180/M_PI);
 }
@@ -148,7 +190,7 @@ void LieImuNode::update_accel_ (const Eigen::Vector3d& accel)
     // {6,6}*{6,2}*{2,2} = {6,2}
     Eigen::Matrix<double, 6, 2> K = P_ * H_accel_.transpose() * S.inverse();
 
-    // SE(3): x̂⁺ = x̂⁻ ⊞ δx instead of x̂⁺ = x̂⁻ + δx
+    // SE(3): x = x ⊞ kx instead of
     // x = x + ky
     X_ = X_ * se3_exp_(K * y);
 

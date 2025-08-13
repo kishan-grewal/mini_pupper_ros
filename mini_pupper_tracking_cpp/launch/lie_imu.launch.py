@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 #
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -32,9 +32,9 @@ def _launch_nodes(context, *args, **kwargs):
         for i in range(1, count + 1):
             nodes.append(
                 Node(
-                    package='stanford_controller',
-                    executable='twist_to_command_node',
-                    name='twist_to_command_node',
+                    package='mini_pupper_tracking_cpp',
+                    executable='lie_imu_node',
+                    name='lie_imu_node',
                     namespace=f'robot{i}',
                     output='screen',
                 )
@@ -42,13 +42,14 @@ def _launch_nodes(context, *args, **kwargs):
     else:
         nodes.append(
             Node(
-                package='stanford_controller',
-                executable='twist_to_command_node',
-                name='twist_to_command_node',
+                package='mini_pupper_tracking_cpp',
+                executable='lie_imu_node',
+                name='lie_imu_node',
                 output='screen',
+                # no namespace
             )
         )
-    
+
     return nodes
 
 
@@ -60,4 +61,3 @@ def generate_launch_description():
                               description='Number of robots when multi_robot is true'),
         OpaqueFunction(function=_launch_nodes),
     ])
-

@@ -33,7 +33,6 @@ class LieImuNode : public rclcpp::Node
 public:
     LieImuNode();
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
 private:
     // ekf timing
     rclcpp::TimerBase::SharedPtr ekf_timer_;
@@ -52,6 +51,9 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_subscription_;
     void cmd_vel_callback_ (geometry_msgs::msg::Twist::ConstSharedPtr msg);
 
+    // publishers
+    rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr ekf_pose_publisher_;
+
     // ekf
     Eigen::Matrix4d X_ = Eigen::Matrix4d::Identity(); // pose (world←state)
     Matrix6d P_; // covariance
@@ -65,6 +67,8 @@ private:
 
     void predict_ (const double dt, const Vector6d& u);
     void update_accel_ (const Eigen::Vector3d& accel);
+    void ekf_publish_ (const rclcpp::Time &stamp);
+    void ekf_log_ ();
 
     // SE3 tools
     Eigen::Matrix3d skew_ (Eigen::Vector3d w);
